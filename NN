@@ -1,0 +1,136 @@
+import numpy as np
+import torch
+import torch.nn as nn
+import torch.optim as optim
+import tensorflow as tf
+from tensorflow.keras import layers, models
+from tensorflow.keras.datasets import mnist
+from sklearn.metrics import accuracy_score
+from torchvision import datasets, transforms
+
+
+
+class NeuralNetworkScratch:
+    def __init__(self, input_size, hidden_size, output_size, learning_rate=0.01):
+        self.weights_input_hidden = np.random.randn(input_size, hidden_size) * 0.01
+        self.bias_hidden = np.zeros((1, hidden_size))
+        self.weights_hidden_output = np.random.randn(hidden_size, output_size) * 0.01
+        self.bias_output = np.zeros((1, output_size))
+        self.learning_rate = learning_rate
+
+    def sigmoid(self, x):
+        return 1 / (1 + np.exp(-x))
+
+    def sigmoid_derivative(self, x):
+        return x * (1 - x)
+
+    def forward(self, X):
+        self.hidden_input = np.dot(X, self.weights_input_hidden) + self.bias_hidden
+        self.hidden_output = self.sigmoid(self.hidden_input)
+        self.final_input = np.dot(self.hidden_output, self.weights_hidden_output) + self.bias_output
+        self.final_output = self.sigmoid(self.final_input)
+        return self.final_output
+
+    def backward(self, X, y):
+        output_error = self.final_output - y
+        output_delta = output_error * self.sigmoid_derivative(self.final_output)
+
+        hidden_error = np.dot(output_delta, self.weights_hidden_output.T)
+        hidden_delta = hidden_error * self.sigmoid_derivative(self.hidden_output)
+
+        self.weights_hidden_output -= self.learning_rate * np.dot(self.hidden_output.T, output_delta)
+        self.bias_output -= self.learning_rate * np.sum(output_delta, axis=0, keepdims=True)
+        self.weights_input_hidden -= self.learning_rate * np.dot(X.T, hidden_delta)
+        self.bias_hidden -= self.learning_rate * np.sum(hidden_delta, axis=0, keepdims=True)
+
+    def train(self, X, y, epochs):
+        for _ in range(epochs):
+            self.forward(X)
+            self.backward(X, y)
+
+    def predict(self, X):
+        output = self.forward(X)
+        return np.argmax(output, axis=1)
+
+def load_mnist_data():
+    from tensorflow.keras.datasets import mnist
+    (X_train, y_train), (X_test, y_test) = mnist.load_data()
+    X_train = X_train.reshape(X_train.shape[0], -1).astype(np.float32) / 255
+    X_test = X_test.reshape(X_test.shape[0], -1).astype(np.float32) / 255
+    y_train = np.eye(10)[y_train]
+    y_test = np.eye(10)[y_test]
+    return X_train, y_train, X_test, y_test
+
+X_train, y_train, X_test, y_test = load_mnist_data()
+
+# Train Neural Network from Scratch
+nn_scratch = NeuralNetworkScratch(input_size=784, hidden_size=64, output_size=10, learning_rate=0.1)
+nn_scratch.train(X_train, y_train, epochs=10)
+y_pred_scratch = nn_scratch.predict(X_test)
+y_test_labels = np.argmax(y_test, axis=1)
+accuracy_scratch = accuracy_score(y_test_labels, y_pred_scratch)
+print(f"Neural Network from Scratch Accuracy: {accuracy_scratch:.2f}")
+
+
+class SimpleNNPyTorch(nn.Module):
+    def __init__(self):
+        super(SimpleNNPyTorch, self).__init__()
+        self.fc1 = nn.Linear(784, 64)
+        self.fc2 = nn.Linear(64, 10)
+        self.relu = nn.ReLU()
+        self.softmax = nn.LogSoftmax(dim=1)
+
+    def forward(self, x):
+        x = self.relu(self.fc1(x))
+        x = self.fc2(x)
+        return self.softmax(x)
+
+transform = transforms.Compose([transforms.ToTensor(), transforms.Lambda(lambda x: x.view(-1))])
+train_loader = torch.utils.data.DataLoader(datasets.MNIST('.', train=True, download=True, transform=transform), batch_size=64, shuffle=True)
+test_loader = torch.utils.data.DataLoader(datasets.MNIST('.', train=False, transform=transform), batch_size=1000, shuffle=False)
+
+model_pytorch = SimpleNNPyTorch()
+criterion = nn.NLLLoss()
+optimizer = optim.SGD(model_pytorch.parameters(), lr=0.01)
+
+for epoch in range(10):
+    model_pytorch.train()
+    for batch in train_loader:
+        images, labels = batch
+        optimizer.zero_grad()
+        output = model_pytorch(images)
+        loss = criterion(output, labels)
+        loss.backward()
+        optimizer.step()
+
+model_pytorch.eval()
+correct = 0
+total = 0
+with torch.no_grad():
+    for images, labels in test_loader:
+        outputs = model_pytorch(images)
+        _, predicted = torch.max(outputs.data, 1)
+        total += labels.size(0)
+        correct += (predicted == labels).sum().item()
+
+accuracy_pytorch = correct / total
+print(f"PyTorch Model Accuracy: {accuracy_pytorch:.2f}")
+
+
+model_tf = models.Sequential([
+    layers.Flatten(input_shape=(28, 28)),
+    layers.Dense(64, activation='relu'),
+    layers.Dense(10, activation='softmax')
+])
+
+model_tf.compile(optimizer='sgd',
+                 loss='sparse_categorical_crossentropy',
+                 metrics=['accuracy'])
+
+X_train_tf, y_train_tf = X_train.reshape(-1, 28, 28), np.argmax(y_train, axis=1)
+X_test_tf, y_test_tf = X_test.reshape(-1, 28, 28), np.argmax(y_test, axis=1)
+
+model_tf.fit(X_train_tf, y_train_tf, epochs=10, batch_size=64)
+
+loss_tf, accuracy_tf = model_tf.evaluate(X_test_tf, y_test_tf)
+print(f"TensorFlow Model Accuracy: {accuracy_tf:.2f}")
